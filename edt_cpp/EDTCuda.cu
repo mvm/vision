@@ -4,7 +4,7 @@
 
 #include "EDTCuda.hpp"
 
-#if EDT_VERSION == 1
+#if EDT_VERSION_COL == 1
 // kernel for one dimensional EDT (calculates columns)
 __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -42,7 +42,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
         }
     }
 }
-#elif EDT_VERSION == 2
+#elif EDT_VERSION_COL == 2
 __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y;
@@ -77,7 +77,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
 #endif /* EDT_VERSION */
 
 #if EDT_ENABLE_ROW
-#if EDT_VERSION == 1
+#if EDT_VERSION_ROW == 1
 // rows step of the distance transform
 __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -136,7 +136,7 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     if (v != nullptr) free(v);
     if(z != nullptr) free(z);
 }
-#elif EDT_VERSION == 2
+#elif EDT_VERSION_ROW == 2
 __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
 
 }
@@ -210,23 +210,23 @@ cv::Mat EDTCuda::leave() {
 }
 
 void EDTCuda::run() {
-#if EDT_VERSION == 1
+#if EDT_VERSION_COL == 1
     edt_col<<<blocks, threads>>>(d_data, d_out, w, h);
-
-#if EDT_ENABLE_ROW
-    edt_row<<<blocks, threads>>>(d_out, d_out_row, w, h);
-#endif // EDT_ENABLE_ROW
-#elif EDT_VERSION == 2
+#elif EDT_VERSION_COL == 2
     dim3 threadsPerBlock(threads, 1, 1);
     dim3 blocksPerGrid(blocks, w, 1);
 
     edt_col<<<blocksPerGrid, threadsPerBlock, sizeof(FLOAT)*h>>>(d_data, d_out, w, h);
-#if EDT_ENABLE_ROW
-    edt_row<<<blocksPerGrid, threadsPerBlock>>>(d_out, d_out_row, w, h);
+#else
+#error "EDT_VERSION_COL must be 1 or 2"
 #endif
 
+#if EDT_ENABLE_ROW
+#if EDT_VERSION_ROW == 1
+    edt_row<<<blocks, threads>>>(d_out, d_out_row, w, h);
 #else
-#error "EDT_VERSION must be 1 or 2"
+#error "EDT_VERSION_ROW must be 1 or 2"
 #endif
+#endif // EDT_ENABLE_ROW
     cudaDeviceSynchronize();
 }
