@@ -77,7 +77,6 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
 #endif /* EDT_VERSION */
 
 #if EDT_ENABLE_ROW
-#if EDT_VERSION_ROW == 1
 // rows step of the distance transform
 __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -136,11 +135,6 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     if (v != nullptr) free(v);
     if(z != nullptr) free(z);
 }
-#elif EDT_VERSION_ROW == 2
-__global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
-
-}
-#endif /* EDT_VERSION */
 #endif /* EDT_ENABLE_ROW */
 
 EDTCuda::EDTCuda(cv::Mat image, unsigned int blocks, unsigned int threads,
@@ -161,8 +155,10 @@ EDTCuda::EDTCuda(cv::Mat image, unsigned int blocks, unsigned int threads,
 void EDTCuda::enter() {
     // set cuda heap size limit to our memory requirements
     // for the rows operation
+
     unsigned long memory_limit = w*h*(2*sizeof(FLOAT) + sizeof(uchar)) +
         (w+2)*(h)*(sizeof(unsigned int) + sizeof(FLOAT));
+
     std::cout << "Memory limit: " << memory_limit << " B" << std::endl;
     cudaDeviceSetLimit(cudaLimitMallocHeapSize, memory_limit);
 
@@ -222,11 +218,7 @@ void EDTCuda::run() {
 #endif
 
 #if EDT_ENABLE_ROW
-#if EDT_VERSION_ROW == 1
     edt_row<<<blocks, threads>>>(d_out, d_out_row, w, h);
-#else
-#error "EDT_VERSION_ROW must be 1 or 2"
-#endif
 #endif // EDT_ENABLE_ROW
     cudaDeviceSynchronize();
 }
