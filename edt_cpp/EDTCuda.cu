@@ -74,6 +74,107 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
         out[row*w + y] = value;
     }
 }
+#elif EDT_VERSION_COL == 3
+#define TEST 1
+__global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
+    unsigned int col = blockIdx.x;
+    unsigned int thread = threadIdx.x;
+
+    extern __shared__ FLOAT V[];
+
+    // Copy column to shared memory
+    for(unsigned int i = thread; i < h; i += blockDim.x) {
+        V[i] = INFINITY;
+        if(in[col + i*w] == 0) {
+            V[i] = i;
+        }
+    }
+    __syncthreads();
+
+    // reduction phase
+    unsigned int treeLimit = ceil(log2f(h) - 1);
+
+    for(unsigned int i = 0; i < treeLimit; i++) {
+        unsigned int step = 1 << (i + 1);
+
+        for(unsigned int j = thread; j < h; j += blockDim.x) {
+            unsigned int prevStep = 1 << i;
+            unsigned int from = j + prevStep - 1;
+            unsigned int dest = j + step - 1;
+
+            if(dest < h && V[dest] == INFINITY && V[from] != INFINITY)
+                V[dest] = V[from];
+        }
+        __syncthreads();
+    }
+
+    __syncthreads();
+
+    // down-sweep phase
+    treeLimit = ceil(log2f(h) - 2);
+    for(unsigned int i = treeLimit; i > 0; i--) {
+        unsigned int step = 1 << (i + 1);
+        for(unsigned int j = thread; j < h; j += blockDim.x) {
+            unsigned int prevStep = 1 << i;
+            unsigned int dest = j + 3*prevStep - 1;
+            unsigned int from = j + step - 1;
+            if(dest < h && V[dest] == INFINITY && V[from] != INFINITY) {
+                V[dest] = V[from];
+            }
+        }
+        __syncthreads();
+    }
+
+    __syncthreads();
+
+    treeLimit = ceil(log2f(h) - 1);
+    for(unsigned int i = 0; i < treeLimit; i++) {
+        unsigned int step = 1 << (i+1);
+
+        for(int j = h - threadIdx.x - 1; j >= 0; j -= blockDim.x) {
+            unsigned int prevStep = 1 << i;
+            int from = j + step - 1;
+            int dest = j + prevStep - 1;
+            if(from >= 0 && from < h && dest >= 0 && dest < h &&
+                (V[from] - j)*(V[from] - j) < (V[dest] - j)*(V[dest] - j)) {
+                    V[dest] = V[from];
+                }
+        }
+        __syncthreads();
+    }
+
+    __syncthreads();
+
+    // down-sweep phase
+    treeLimit = ceil(log2f(h) - 2);
+    for(int i = treeLimit; i > 0; i--) {
+        unsigned int step = 1 << (i + 1);
+        for(int j = h - thread - 1; j >= 0; j -= blockDim.x) {
+            unsigned int prevStep = 1 << i;
+            int from = j + 3*prevStep - 1;
+            int dest = j + step - 1;
+            if(dest >= 0 && from >= 0 && dest < h && from < h 
+                && abs(V[from] - j) < abs(V[dest] - j)) {
+                V[dest] = V[from];
+            }
+        }
+        __syncthreads();
+    }
+
+    __syncthreads();
+
+    // Copỳ back shared memory to output image
+    for(unsigned int i = thread; i < h; i += blockDim.x) {
+#if TEST == 1
+        // Convert closest site index to distance from closest site squared
+        out[col + i*w] = (i - V[i])*(i - V[i]);
+#else
+        out[col + i*w] = V[i];
+#endif // TEST
+    }
+}
+#else
+#error "EDT_VERSION_COL must be 1, 2 or 3"
 #endif /* EDT_VERSION */
 
 #if EDT_ENABLE_ROW
@@ -165,6 +266,7 @@ void EDTCuda::enter() {
     // allocate memory in device and copy input data to GPU
     cudaMalloc(&d_data, sizeof(uchar)*w*h);
     cudaMalloc(&d_out, sizeof(FLOAT)*w*h);
+
 #if EDT_ENABLE_ROW
     cudaMalloc(&d_out_row, sizeof(FLOAT)*w*h);
 #endif
@@ -213,12 +315,18 @@ void EDTCuda::run() {
     dim3 blocksPerGrid(blocks, w, 1);
 
     edt_col<<<blocksPerGrid, threadsPerBlock, sizeof(FLOAT)*h>>>(d_data, d_out, w, h);
+#elif EDT_VERSION_COL == 3
+    dim3 threadsPerBlock(threads);
+    dim3 blocksPerGrid(w);
+
+    edt_col<<<blocksPerGrid, threadsPerBlock, sizeof(FLOAT)*h>>>(d_data, d_out, w, h);
 #else
-#error "EDT_VERSION_COL must be 1 or 2"
+#error "EDT_VERSION_COL must be 1, 2 or 3"
 #endif
+    cudaDeviceSynchronize();
 
 #if EDT_ENABLE_ROW
     edt_row<<<blocks, threads>>>(d_out, d_out_row, w, h);
-#endif // EDT_ENABLE_ROW
     cudaDeviceSynchronize();
+#endif // EDT_ENABLE_ROW
 }

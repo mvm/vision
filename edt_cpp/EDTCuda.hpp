@@ -1,9 +1,9 @@
 #pragma once
 #include <opencv2/opencv.hpp>
 
-#define EDT_ENABLE_ROW 1 // deactivate row processing for debug
+#define EDT_ENABLE_ROW 0 // deactivate row processing for debug
 #define USE_DOUBLE 1 // used to change types easily
-#define EDT_VERSION_COL 1 // can be 1 or 2
+#define EDT_VERSION_COL 1 // can be 1, 2 or 3
 
 #if USE_DOUBLE
 #define FLOAT double
