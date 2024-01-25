@@ -75,7 +75,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     }
 }
 #elif EDT_VERSION_COL == 3
-#define TEST 1
+#define TEST 0
 __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     unsigned int col = blockIdx.x;
     unsigned int thread = threadIdx.x;
@@ -178,6 +178,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
 #endif /* EDT_VERSION */
 
 #if EDT_ENABLE_ROW
+#if EDT_VERSION_ROW == 1
 // rows step of the distance transform
 __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -236,6 +237,175 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
     if (v != nullptr) free(v);
     if(z != nullptr) free(z);
 }
+#elif EDT_VERSION_ROW == 2
+
+#if EDT_VERSION_COL != 3
+#error "EDT_VERSION_COL must be 3"
+#endif
+
+#if TEST
+#error "TEST must be set to zero to process rows"
+#endif
+
+/* Calculate intersection point of bisecting line with the x axis. */
+__device__ static FLOAT intersection_point(FLOAT x1, FLOAT y1, FLOAT x2, FLOAT y2, FLOAT row) {
+    FLOAT y1p = row - y1;
+    FLOAT y2p = row - y2;
+
+    if(x1 == x2) {
+        return INFINITY;
+    }
+    return (x2 - x1)/2 + (y2p + y1p) * (y2p - y1p) / 2 / (x2 - x1);
+}
+
+__device__ void find_closest(FLOAT *X, FLOAT *Y, FLOAT *Xout, FLOAT *Yout, unsigned int len, unsigned int row) {
+    unsigned int i = 0, end = 0, iout = 0;
+    if(X[0] == INFINITY) {
+        while(X[end] == INFINITY && end < len) {
+            end++;
+        }
+        while( i < end && i < len) {
+            Xout[i] = X[end];
+            Yout[i] = Y[end];
+            i++;
+        }
+    }
+
+    iout = i;
+
+    while(end < len) {
+        end = i+1;
+
+        while(end < len && X[end] == INFINITY) {
+            end++;
+        }
+
+        if(end >= len) break;
+
+        FLOAT u = intersection_point(X[i], Y[i], X[end], Y[end], row);
+        unsigned int j = iout;
+        while(j < i + ceil(u) && j < len) {
+            Xout[j] = X[i];
+            Yout[j] = Y[i];
+            j++;
+        }
+        while(j < len && j < end) {
+            Xout[j] = X[end];
+            Yout[j] = Y[end];
+            j++;
+        }
+        i = end;
+        iout = j;
+    }
+
+    for(unsigned int j = iout; j < len; j++) {
+        Xout[j] = X[iout];
+        Yout[j] = Y[iout];
+    }
+}
+
+__device__ void stack_merge(FLOAT *X, FLOAT *Y, unsigned int len,
+    unsigned int row, unsigned int start, unsigned int end) {
+    unsigned int stack_end = (end - start)/2;
+
+    for(unsigned int i = start + stack_end; i < len && i < end; i++) {
+        while(X[i] == INFINITY && i < len && i < end)
+            i++;
+        if(i == len || i == end) break;
+
+        unsigned j = i - 1;
+        // skip possible empty points
+        while(X[j] == INFINITY && j > 0 && j > start) {
+            j--;
+        }
+
+        while(j > 0 && j > start) {
+            FLOAT top_intersection = (FLOAT)j + intersection_point(X[j], Y[j], X[i], Y[i], row);
+            unsigned int next_point = j - 1;
+            // skip empty points between j and the next point
+            while(X[next_point] == INFINITY && next_point > 0 && next_point > start) {
+                next_point--;
+            }
+            if(next_point == 0 || next_point == start) break;
+
+            // X[next_point] != INFINITY
+            FLOAT first_intersection = (FLOAT)next_point + intersection_point(X[next_point], Y[next_point], 
+                X[j], Y[j], row);
+            
+            if(ceil(first_intersection) > ceil(top_intersection)) {
+                X[j] = INFINITY;
+                Y[j] = INFINITY;
+                j = next_point;
+            } else {
+                break;
+           }
+        }
+    }
+}
+
+__global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *Xout, FLOAT *Yout, int w, int h) {
+    // one block per row
+    unsigned int row = blockIdx.x;
+    unsigned int thread = threadIdx.x;
+    extern __shared__ FLOAT shared_memory[];
+
+    FLOAT *X = &shared_memory[0]; // x coordinate of closest point
+    FLOAT *Y = &shared_memory[w]; // y coordinate of closest point
+    __syncthreads();
+
+    // set up variables in shared memory
+    // we receive an image with the y coordinate of the vertically closest
+    // point in the variable `in`
+    for(unsigned int i = thread; i < w; i += blockDim.x) {
+        Y[i] = in[row*w + i];
+        X[i] = i;
+    }
+    __syncthreads();
+
+    // create initial stacks with 3 elements
+    for(unsigned int i = thread * 3; i < w ; i += blockDim.x * 3) {
+        unsigned int indexA = i;
+        unsigned int indexB = i+1;
+        unsigned int indexC = i+2;
+
+        FLOAT u = intersection_point(X[indexA], Y[indexA], X[indexB], Y[indexB], row);
+        FLOAT v = intersection_point(X[indexB], Y[indexB], X[indexC], Y[indexC], row);
+        if(ceil(indexA + u) > ceil(indexB + v)) {
+            X[indexB] = INFINITY;
+            Y[indexB] = INFINITY;
+        }
+    }
+    __syncthreads();
+
+    // TODO: stack merge
+    // filter stacks by dominant interval
+
+    for(unsigned int stack_size = 3*2; stack_size < 2*w; stack_size *= 2) {
+        unsigned int start = stack_size * thread;
+
+        if(start < w) {
+            stack_merge(X, Y, w, row, start, start + stack_size);
+        }
+    }
+    __syncthreads();
+
+    // find closest point given filtered stacks
+    
+    if(thread == 0) {
+        find_closest(X, Y, &Xout[row*w], &Yout[row*w], w, row);
+    }
+    __syncthreads();
+
+    // set output to distance to computed closest point
+    for(unsigned int i = thread; i < w; i += blockDim.x) {
+        FLOAT xi = Xout[row*w + i];
+        FLOAT yi = Yout[row*w + i];
+        out[row*w + i] = sqrt((xi - i)*(xi - i) + (yi - row)*(yi - row));
+    }
+}
+#else
+#error "EDT_VERSION_ROW must be 1 or 2"
+#endif
 #endif /* EDT_ENABLE_ROW */
 
 EDTCuda::EDTCuda(cv::Mat image, unsigned int blocks, unsigned int threads,
@@ -248,6 +418,10 @@ EDTCuda::EDTCuda(cv::Mat image, unsigned int blocks, unsigned int threads,
     this->data = image.data;
     d_data = NULL;
     d_out = NULL;
+#if EDT_VERSION_ROW == 2
+    d_Xout = NULL;
+    d_Yout = NULL;
+#endif
 #if EDT_ENABLE_ROW
     d_out_row = NULL;
 #endif
@@ -257,8 +431,12 @@ void EDTCuda::enter() {
     // set cuda heap size limit to our memory requirements
     // for the rows operation
 
+#if EDT_VERSION_ROW == 2
+    unsigned long memory_limit = w*h*4*sizeof(FLOAT) + w*h*sizeof(uchar);
+#else
     unsigned long memory_limit = w*h*(2*sizeof(FLOAT) + sizeof(uchar)) +
         (w+2)*(h)*(sizeof(unsigned int) + sizeof(FLOAT));
+#endif
 
     std::cout << "Memory limit: " << memory_limit << " B" << std::endl;
     cudaDeviceSetLimit(cudaLimitMallocHeapSize, memory_limit);
@@ -268,6 +446,11 @@ void EDTCuda::enter() {
     cudaMalloc(&d_out, sizeof(FLOAT)*w*h);
 
 #if EDT_ENABLE_ROW
+#if EDT_VERSION_ROW == 2
+    cudaMalloc(&d_Xout, w*h*sizeof(FLOAT));
+    cudaMalloc(&d_Yout, w*h*sizeof(FLOAT));
+#endif
+
     cudaMalloc(&d_out_row, sizeof(FLOAT)*w*h);
 #endif
     cudaMemcpy(d_data, data, sizeof(uchar)*w*h, cudaMemcpyHostToDevice);
@@ -297,6 +480,10 @@ cv::Mat EDTCuda::leave() {
 
     cudaFree(d_out);
 #if EDT_ENABLE_ROW
+#if EDT_VERSION_ROW == 2
+    cudaFree(d_Xout);
+    cudaFree(d_Yout);
+#endif
     cudaFree(d_out_row);
 #endif
     cudaFree(d_data);
@@ -326,7 +513,17 @@ void EDTCuda::run() {
     cudaDeviceSynchronize();
 
 #if EDT_ENABLE_ROW
+#if EDT_VERSION_ROW == 1
     edt_row<<<blocks, threads>>>(d_out, d_out_row, w, h);
+#elif EDT_VERSION_ROW == 2
+    dim3 threadsPerBlockRow(threads);
+    dim3 blocksPerGridRow(h);
+
+    edt_row<<<blocksPerGridRow,
+        threadsPerBlockRow, 2*w*sizeof(FLOAT)>>> (d_out, d_out_row, d_Xout, d_Yout, w, h);
+#else
+#error "EDT_VERSION_ROW must be 1 or 2"
+#endif
     cudaDeviceSynchronize();
 #endif // EDT_ENABLE_ROW
 }
