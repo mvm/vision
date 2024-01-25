@@ -381,10 +381,10 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *Xout, FLOAT *Yout, 
     // filter stacks by dominant interval
 
     for(unsigned int stack_size = 3*2; stack_size < 2*w; stack_size *= 2) {
-        unsigned int start = stack_size * thread;
-
-        if(start < w) {
-            stack_merge(X, Y, w, row, start, start + stack_size);
+        for(unsigned int start = stack_size*thread; start < w; start += blockDim.x * stack_size) {
+            if(start < w) {
+                stack_merge(X, Y, w, row, start, start + stack_size);
+            }
         }
     }
     __syncthreads();
