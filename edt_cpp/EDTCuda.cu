@@ -18,6 +18,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
             unsigned int d = j*w + i;
             unsigned int d1 = d - w;
 
+#if EDT_VERSION_ROW == 1
             if(in[d] != 0) {
                 out[d] = out[d1] + b;
                 b += 2.0;
@@ -25,6 +26,13 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
                 out[d] = 0.0;
                 b = 1.0;
             }
+#else
+            if(in[d] != 0 ) {
+                out[d] = out[d1];
+            } else {
+                out[d] = j;
+            }
+#endif
         }
 
         b = 1.0;
@@ -32,6 +40,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
             unsigned int d = j*w + i;
             unsigned int d1 = d + w;
 
+#if EDT_VERSION_ROW == 1
             if(out[d] > out[d1]) {
                 out[d] = out[d1] + b;
                 b += 2.0;
@@ -39,6 +48,11 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
             if(out[d] == 0) {
                 b = 1.0;
             }
+#else
+            if((out[d] - j)*(out[d] - j) > (out[d1] - j)*(out[d1] - j)) {
+                out[d] = out[d1];
+            }
+#endif
         }
     }
 }
@@ -75,7 +89,6 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     }
 }
 #elif EDT_VERSION_COL == 3
-#define TEST 0
 __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     unsigned int col = blockIdx.x;
     unsigned int thread = threadIdx.x;
@@ -165,7 +178,7 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
 
     // Copỳ back shared memory to output image
     for(unsigned int i = thread; i < h; i += blockDim.x) {
-#if TEST == 1
+#if EDT_VERSION_ROW == 1
         // Convert closest site index to distance from closest site squared
         out[col + i*w] = (i - V[i])*(i - V[i]);
 #else
@@ -239,12 +252,8 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, int w, int h) {
 }
 #elif EDT_VERSION_ROW == 2
 
-#if EDT_VERSION_COL != 3
-#error "EDT_VERSION_COL must be 3"
-#endif
-
-#if TEST
-#error "TEST must be set to zero to process rows"
+#if (EDT_VERSION_COL != 3) && (EDT_VERSION_COL != 1)
+#error "EDT_VERSION_COL must be 3 or 1"
 #endif
 
 /* Calculate intersection point of bisecting line with the x axis. */
@@ -377,7 +386,6 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *Xout, FLOAT *Yout, 
     }
     __syncthreads();
 
-    // TODO: stack merge
     // filter stacks by dominant interval
 
     for(unsigned int stack_size = 3*2; stack_size < 2*w; stack_size *= 2) {
@@ -386,6 +394,7 @@ __global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *Xout, FLOAT *Yout, 
                 stack_merge(X, Y, w, row, start, start + stack_size);
             }
         }
+        __syncthreads();
     }
     __syncthreads();
 
