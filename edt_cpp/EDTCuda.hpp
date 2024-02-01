@@ -3,8 +3,8 @@
 
 #define EDT_ENABLE_ROW 1 // deactivate row processing for debug
 #define USE_DOUBLE 1 // used to change types easily
-#define EDT_VERSION_COL 3 // can be 1, 2 or 3
-#define EDT_VERSION_ROW 1 // can be 1 or 2. 2 can only be used with EDT_VERSION_COL = 3
+#define EDT_VERSION_COL 1 // can be 1, 2 or 3
+#define EDT_VERSION_ROW 2 // can be 1 or 2. 2 can only be used with EDT_VERSION_COL = 3 or 1
 
 #if USE_DOUBLE
 #define FLOAT double

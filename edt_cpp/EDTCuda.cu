@@ -12,7 +12,9 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
     unsigned int step = gridDim.x * blockDim.x;
     // one thread per column
     for(int i = x; i < w; i += step) {
+#if EDT_VERSION_ROW == 1
         FLOAT b = 1.0;
+#endif
 
         for(int j = 1; j < h; j++) {
             unsigned int d = j*w + i;
@@ -35,7 +37,10 @@ __global__ static void edt_col(uchar *in, FLOAT *out, int w, int h) {
 #endif
         }
 
+#if EDT_VERSION_ROW == 1
         b = 1.0;
+#endif
+
         for(int j = h - 2 ; j >= 0; j--) {
             unsigned int d = j*w + i;
             unsigned int d1 = d + w;
@@ -282,34 +287,31 @@ __device__ void find_closest(FLOAT *X, FLOAT *Y, FLOAT *Xout, FLOAT *Yout, unsig
 
     iout = i;
 
-    while(end < len) {
+    while(1) {
         end = i+1;
 
         while(end < len && X[end] == INFINITY) {
             end++;
         }
 
-        if(end >= len) break;
+        if(end >= len) {
+            for(unsigned int k = iout; k < len; k++) {
+                Xout[k] = X[i];
+                Yout[k] = Y[i];
+            }
+            break;
+        }
 
         FLOAT u = intersection_point(X[i], Y[i], X[end], Y[end], row);
         unsigned int j = iout;
-        while(j < i + ceil(u) && j < len) {
+        while(j < ceil(i + u) && j < len) {
             Xout[j] = X[i];
             Yout[j] = Y[i];
             j++;
         }
-        while(j < len && j < end) {
-            Xout[j] = X[end];
-            Yout[j] = Y[end];
-            j++;
-        }
+        
         i = end;
         iout = j;
-    }
-
-    for(unsigned int j = iout; j < len; j++) {
-        Xout[j] = X[iout];
-        Yout[j] = Y[iout];
     }
 }
 
