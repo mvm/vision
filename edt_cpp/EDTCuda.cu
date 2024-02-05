@@ -354,16 +354,13 @@ __device__ void stack_merge(FLOAT *X, FLOAT *Y, unsigned int len,
     }
 }
 
-__global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *Xout, FLOAT *Yout, int w, int h) {
+__global__ static void edt_row(FLOAT *in, FLOAT *out, FLOAT *X, FLOAT *Y, FLOAT *Xout, FLOAT *Yout, int w, int h) {
     // one block per row
     unsigned int row = blockIdx.x;
     unsigned int thread = threadIdx.x;
-    extern __shared__ FLOAT shared_memory[];
 
-    FLOAT *X = &shared_memory[0]; // x coordinate of closest point
-    FLOAT *Y = &shared_memory[w]; // y coordinate of closest point
-    __syncthreads();
-
+    X = &X[row*w];
+    Y = &Y[row*w];
     // set up variables in shared memory
     // we receive an image with the y coordinate of the vertically closest
     // point in the variable `in`
@@ -432,6 +429,8 @@ EDTCuda::EDTCuda(cv::Mat image, unsigned int blocks, unsigned int threads,
 #if EDT_VERSION_ROW == 2
     d_Xout = NULL;
     d_Yout = NULL;
+    d_X = NULL;
+    d_Y = NULL;
 #endif
 #if EDT_ENABLE_ROW
     d_out_row = NULL;
@@ -443,7 +442,7 @@ void EDTCuda::enter() {
     // for the rows operation
 
 #if EDT_VERSION_ROW == 2
-    unsigned long memory_limit = w*h*4*sizeof(FLOAT) + w*h*sizeof(uchar);
+    unsigned long memory_limit = w*h*8*sizeof(FLOAT) + w*h*sizeof(uchar);
 #else
     unsigned long memory_limit = w*h*(2*sizeof(FLOAT) + sizeof(uchar)) +
         (w+2)*(h)*(sizeof(unsigned int) + sizeof(FLOAT));
@@ -460,6 +459,8 @@ void EDTCuda::enter() {
 #if EDT_VERSION_ROW == 2
     cudaMalloc(&d_Xout, w*h*sizeof(FLOAT));
     cudaMalloc(&d_Yout, w*h*sizeof(FLOAT));
+    cudaMalloc(&d_X, w*h*sizeof(FLOAT));
+    cudaMalloc(&d_Y, w*h*sizeof(FLOAT));
 #endif
 
     cudaMalloc(&d_out_row, sizeof(FLOAT)*w*h);
@@ -494,6 +495,8 @@ cv::Mat EDTCuda::leave() {
 #if EDT_VERSION_ROW == 2
     cudaFree(d_Xout);
     cudaFree(d_Yout);
+    cudaFree(d_X);
+    cudaFree(d_Y);
 #endif
     cudaFree(d_out_row);
 #endif
@@ -531,7 +534,7 @@ void EDTCuda::run() {
     dim3 blocksPerGridRow(h);
 
     edt_row<<<blocksPerGridRow,
-        threadsPerBlockRow, 2*w*sizeof(FLOAT)>>> (d_out, d_out_row, d_Xout, d_Yout, w, h);
+        threadsPerBlockRow>>> (d_out, d_out_row, d_X, d_Y, d_Xout, d_Yout, w, h);
 #else
 #error "EDT_VERSION_ROW must be 1 or 2"
 #endif
