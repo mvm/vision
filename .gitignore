@@ -1,0 +1,9 @@
+*.png
+images/
+edt_cpp/build
+TODO.txt
+*.txt
+*.sh
+*.zip
+.vscode/
+build/
